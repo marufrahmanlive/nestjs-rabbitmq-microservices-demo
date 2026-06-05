@@ -172,28 +172,114 @@ Expected output — all 15 containers with status `Up`:
 | `rabbitmq`               | 1 (healthy) |
 | `mongodb`                | 1 (healthy) |
 
-### 4. Test the System
+### 4. Test All Endpoints
 
-#### Health Check (tests Nginx → API Gateway)
+> **Tip:** You can also use the provided `requests.http` file with VS Code's [REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) extension for one-click testing.
+
+#### 4.1 Health Check
+
+Tests Nginx → API Gateway connectivity. Since Nginx load balances across 3 API Gateway replicas, repeated requests will show different instance IDs.
+
+**Endpoint:** `GET /orders/health`
 
 ```bash
 curl http://localhost:3000/orders/health
 # {"status":"ok","instance":"api-gateway-xxxxx"}
+
+# Verify load balancing across all 3 instances
+for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance; done
 ```
 
-#### Create an Order (end-to-end test)
+**Sample Response:**
+
+```json
+{
+  "status": "ok",
+  "instance": "api-gateway-ab12cd34"
+}
+```
+
+#### 4.2 Create an Order (End-to-End Event Flow)
+
+Creates an order via API Gateway → RabbitMQ → Order Service → MongoDB. This triggers the full event chain: `order_created` event → Payment Service + Notification Service, then `payment_processed` event → Notification Service.
+
+**Endpoint:** `POST /orders`
+
+| Field         | Type   | Required | Constraints | Description          |
+| ------------- | ------ | -------- | ----------- | -------------------- |
+| `customerId`  | string | Yes      | —           | Customer identifier  |
+| `productName` | string | Yes      | —           | Name of the product  |
+| `quantity`    | number | Yes      | ≥ 1         | Order quantity       |
+| `amount`      | number | Yes      | ≥ 0         | Total order amount   |
+| `notes`       | string | No       | —           | Optional order notes |
+
+**Sample Request 1 — Basic Order:**
 
 ```bash
 curl -X POST http://localhost:3000/orders \
   -H "Content-Type: application/json" \
-  -d '{"customerId":"cust-001","productName":"Widget-X","quantity":2,"amount":99.99}'
-
-# {"success":true,"orderId":"6a21b280fa0f318bcfb7ae6d"}
+  -d '{
+    "customerId": "cust-001",
+    "productName": "Widget-X",
+    "quantity": 2,
+    "amount": 99.99
+  }'
 ```
 
-#### Verify Data in MongoDB
+**Sample Response:**
+
+```json
+{
+  "success": true,
+  "orderId": "6a21b280fa0f318bcfb7ae6d"
+}
+```
+
+**Sample Request 2 — Order with Notes:**
 
 ```bash
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerId": "cust-002",
+    "productName": "Gadget-Y",
+    "quantity": 1,
+    "amount": 49.50,
+    "notes": "Gift wrap please"
+  }'
+```
+
+**Sample Request 3 — High-Value Order:**
+
+```bash
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customerId": "cust-003",
+    "productName": "Enterprise-Server",
+    "quantity": 5,
+    "amount": 15000.00
+  }'
+```
+
+**Sample Request 4 — Multiple Orders (Load Test):**
+
+```bash
+# Send 10 orders to observe load balancing across all services
+for i in $(seq 1 10); do
+  curl -s -X POST http://localhost:3000/orders \
+    -H "Content-Type: application/json" \
+    -d "{\"customerId\":\"cust-$i\",\"productName\":\"Item-$i\",\"quantity\":$i,\"amount\":$((i * 10)).00}" &
+done
+wait
+```
+
+#### 4.3 Verify Data in MongoDB
+
+After creating orders, verify that all services persisted data correctly in their respective collections.
+
+```bash
+# Count documents across all collections
 docker exec mongodb mongosh --quiet microservices-demo --eval "
   print('Orders:', db.orders.countDocuments());
   print('Payments:', db.payments.countDocuments());
@@ -202,6 +288,212 @@ docker exec mongodb mongosh --quiet microservices-demo --eval "
 # Orders: 1
 # Payments: 1
 # Notifications: 2
+```
+
+**Expected results after creating 1 order:**
+
+- **Orders:** 1 (created by Order Service)
+- **Payments:** 1 (created by Payment Service after `order_created` event)
+- **Notifications:** 2 (one for `order_created` event, one for `payment_processed` event)
+
+**Inspect individual documents:**
+
+```bash
+# View a sample order
+docker exec mongodb mongosh --quiet microservices-demo --eval "
+  printjson(db.orders.findOne())
+"
+
+# View a sample payment
+docker exec mongodb mongosh --quiet microservices-demo --eval "
+  printjson(db.payments.findOne())
+"
+
+# View all notifications
+docker exec mongodb mongosh --quiet microservices-demo --eval "
+  db.notifications.find().forEach(printjson)
+"
+```
+
+**Sample Order Document:**
+
+```json
+{
+  "_id": "ObjectId('6a21b280fa0f318bcfb7ae6d')",
+  "customerId": "cust-001",
+  "productName": "Widget-X",
+  "quantity": 2,
+  "amount": 99.99,
+  "status": "created",
+  "notes": null,
+  "createdAt": "2025-06-05T12:00:00.000Z",
+  "updatedAt": "2025-06-05T12:00:00.000Z"
+}
+```
+
+**Sample Payment Document:**
+
+```json
+{
+  "_id": "ObjectId('...')",
+  "orderId": "6a21b280fa0f318bcfb7ae6d",
+  "customerId": "cust-001",
+  "amount": 99.99,
+  "status": "completed",
+  "createdAt": "2025-06-05T12:00:01.000Z",
+  "updatedAt": "2025-06-05T12:00:01.000Z"
+}
+```
+
+**Sample Notification Documents:**
+
+```json
+{
+  "_id": "ObjectId('...')",
+  "eventType": "order_created",
+  "payload": {
+    "orderId": "6a21b280fa0f318bcfb7ae6d",
+    "customerId": "cust-001",
+    "productName": "Widget-X",
+    "quantity": 2,
+    "amount": 99.99
+  },
+  "status": "sent",
+  "createdAt": "2025-06-05T12:00:00.000Z"
+}
+```
+
+```json
+{
+  "_id": "ObjectId('...')",
+  "eventType": "payment_processed",
+  "payload": {
+    "orderId": "6a21b280fa0f318bcfb7ae6d",
+    "customerId": "cust-001",
+    "amount": 99.99
+  },
+  "status": "sent",
+  "createdAt": "2025-06-05T12:00:01.000Z"
+}
+```
+
+#### 4.4 Verify RabbitMQ Queues
+
+Check message broker queues and message counts.
+
+```bash
+# List all queues with message counts
+curl -u admin:admin http://localhost:15672/api/queues | python -m json.tool
+
+# Or use the dedicated queue endpoint
+curl -u admin:admin http://localhost:15672/api/queues/%2F/order_queue
+curl -u admin:admin http://localhost:15672/api/queues/%2F/payment_queue
+curl -u admin:admin http://localhost:15672/api/queues/%2F/notification_queue
+```
+
+#### 4.5 Verify Load Balancing Distribution
+
+Confirm requests are distributed across all 3 replicas at every layer.
+
+**API Gateway Layer (Nginx → API Gateway):**
+
+```bash
+# Bash (Git Bash / WSL)
+for i in {1..30}; do curl -s http://localhost:3000/orders/health | grep instance; done | sort | uniq -c
+
+# PowerShell
+1..30 | ForEach-Object { (Invoke-RestMethod http://localhost:3000/orders/health).instance } | Group-Object | Select-Object Count, Name
+```
+
+**Order Service Layer (via MongoDB):**
+
+```bash
+# Check which order-service instances processed orders
+docker logs order-service-1 --tail 5 | grep "Processing order"
+docker logs order-service-2 --tail 5 | grep "Processing order"
+docker logs order-service-3 --tail 5 | grep "Processing order"
+```
+
+#### 4.6 Error Cases
+
+**Missing Required Fields (Validation Error):**
+
+```bash
+# Missing productName
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"cust-004","quantity":1,"amount":10.00}'
+
+# Expected: 400 Bad Request with validation error details
+```
+
+**Invalid Quantity (Min Constraint):**
+
+```bash
+# quantity must be >= 1
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"cust-005","productName":"Widget","quantity":0,"amount":10.00}'
+
+# Expected: 400 Bad Request
+```
+
+**Invalid Amount (Negative Value):**
+
+```bash
+# amount must be >= 0
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"cust-006","productName":"Widget","quantity":1,"amount":-5.00}'
+
+# Expected: 400 Bad Request
+```
+
+#### 4.7 Complete Test Script
+
+Run this script to perform a full end-to-end smoke test:
+
+```bash
+#!/bin/bash
+# smoke-test.sh — Full end-to-end verification
+
+set -e
+BASE_URL="http://localhost:3000"
+
+echo "=== 1. Health Check ==="
+curl -s "$BASE_URL/orders/health" | python -m json.tool
+
+echo -e "\n=== 2. Create Order ==="
+ORDER_RESPONSE=$(curl -s -X POST "$BASE_URL/orders" \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"smoke-test","productName":"SmokeWidget","quantity":3,"amount":29.97}')
+echo "$ORDER_RESPONSE" | python -m json.tool
+ORDER_ID=$(echo "$ORDER_RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['orderId'])")
+echo "Order ID: $ORDER_ID"
+
+echo -e "\n=== 3. Wait for async processing (3 seconds) ==="
+sleep 3
+
+echo -e "\n=== 4. Verify MongoDB Collections ==="
+docker exec mongodb mongosh --quiet microservices-demo --eval "
+  print('Orders: ' + db.orders.countDocuments());
+  print('Payments: ' + db.payments.countDocuments());
+  print('Notifications: ' + db.notifications.countDocuments());
+"
+
+echo -e "\n=== 5. Verify RabbitMQ Queues ==="
+curl -s -u admin:admin http://localhost:15672/api/queues/%2F/order_queue | python -c "import sys,json; q=json.load(sys.stdin); print(f'order_queue: {q[\"messages\"]} messages')"
+curl -s -u admin:admin http://localhost:15672/api/queues/%2F/payment_queue | python -c "import sys,json; q=json.load(sys.stdin); print(f'payment_queue: {q[\"messages\"]} messages')"
+curl -s -u admin:admin http://localhost:15672/api/queues/%2F/notification_queue | python -c "import sys,json; q=json.load(sys.stdin); print(f'notification_queue: {q[\"messages\"]} messages')"
+
+echo -e "\n=== Smoke Test Complete ==="
+```
+
+Save as `smoke-test.sh` and run:
+
+```bash
+chmod +x smoke-test.sh
+./smoke-test.sh
 ```
 
 ### 5. Access Management UIs

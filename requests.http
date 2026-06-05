@@ -1,0 +1,93 @@
+### ================================================================
+### NestJS RabbitMQ Microservices - API Testing
+### Use with VS Code REST Client extension:
+### https://marketplace.visualstudio.com/items?itemName=humao.rest-client
+### ================================================================
+
+### --------------------------------------------------
+### 1. Health Check
+### Tests: Nginx → API Gateway connectivity
+### --------------------------------------------------
+GET http://localhost:3000/orders/health
+
+### --------------------------------------------------
+### 2. Create Order - Basic
+### Tests: Full event flow (Order → Payment → Notification)
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-001",
+  "productName": "Widget-X",
+  "quantity": 2,
+  "amount": 99.99
+}
+
+### --------------------------------------------------
+### 3. Create Order - With Notes (optional field)
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-002",
+  "productName": "Gadget-Y",
+  "quantity": 1,
+  "amount": 49.50,
+  "notes": "Gift wrap please"
+}
+
+### --------------------------------------------------
+### 4. Create Order - High Value
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-003",
+  "productName": "Enterprise-Server",
+  "quantity": 5,
+  "amount": 15000.00
+}
+
+### --------------------------------------------------
+### 5. Error Case - Missing Required Field (productName)
+### Expected: 400 Bad Request
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-004",
+  "quantity": 1,
+  "amount": 10.00
+}
+
+### --------------------------------------------------
+### 6. Error Case - Invalid Quantity (min: 1)
+### Expected: 400 Bad Request
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-005",
+  "productName": "Widget",
+  "quantity": 0,
+  "amount": 10.00
+}
+
+### --------------------------------------------------
+### 7. Error Case - Invalid Amount (min: 0)
+### Expected: 400 Bad Request
+### --------------------------------------------------
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "customerId": "cust-006",
+  "productName": "Widget",
+  "quantity": 1,
+  "amount": -5.00
+}
