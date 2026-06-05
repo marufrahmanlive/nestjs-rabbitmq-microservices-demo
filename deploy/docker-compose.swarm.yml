@@ -66,10 +66,12 @@ services:
     image: microservices/api-gateway:latest
     environment:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      MONGO_URI: mongodb://mongodb:27017/microservices-demo
       PORT: "3000"
       SERVICE_NAME: api-gateway
     depends_on:
       - rabbitmq
+      - mongodb
     deploy:
       replicas: 3
       update_config:

@@ -391,28 +391,213 @@ curl -u admin:admin http://localhost:15672/api/queues/%2F/payment_queue
 curl -u admin:admin http://localhost:15672/api/queues/%2F/notification_queue
 ```
 
-#### 4.5 Verify Load Balancing Distribution
+#### 4.5 Public Query Endpoints
 
-Confirm requests are distributed across all 3 replicas at every layer.
+The API Gateway now exposes query endpoints that read directly from MongoDB, so you can verify the data produced by all services without connecting to MongoDB directly. Each response includes a `servedBy` field showing which API Gateway instance handled the request.
 
-**API Gateway Layer (Nginx → API Gateway):**
+| Endpoint                    | Method | Description                                                   |
+| --------------------------- | ------ | ------------------------------------------------------------- |
+| `/stats`                    | GET    | Document counts across all collections + event flow health    |
+| `/load-balance/info`        | GET    | Instance ID, timestamp, and uptime of the serving API Gateway |
+| `/orders`                   | GET    | List all orders (sorted by newest first)                      |
+| `/orders/:id`               | GET    | Get a single order by its MongoDB `_id`                       |
+| `/orders/:id/payment`       | GET    | Get the payment linked to a specific order                    |
+| `/orders/:id/notifications` | GET    | Get all notifications linked to a specific order              |
+| `/payments`                 | GET    | List all payments                                             |
+| `/notifications`            | GET    | List all notifications                                        |
+
+**Stats Dashboard:**
 
 ```bash
-# Bash (Git Bash / WSL)
-for i in {1..30}; do curl -s http://localhost:3000/orders/health | grep instance; done | sort | uniq -c
-
-# PowerShell
-1..30 | ForEach-Object { (Invoke-RestMethod http://localhost:3000/orders/health).instance } | Group-Object | Select-Object Count, Name
+curl http://localhost:3000/stats | python -m json.tool
 ```
 
-**Order Service Layer (via MongoDB):**
+**Sample Response:**
+
+```json
+{
+  "servedBy": "api-gateway-ab12cd34",
+  "timestamp": "2025-06-05T12:01:00.000Z",
+  "database": "microservices-demo",
+  "collections": {
+    "orders": 3,
+    "payments": 3,
+    "notifications": 6
+  },
+  "eventFlow": {
+    "description": "Each order should create: 1 payment + 2 notifications (order_created + payment_processed)",
+    "expectedRatio": "orders : payments : notifications = 1 : 1 : 2",
+    "actualRatio": "3 : 3 : 6",
+    "healthy": true
+  }
+}
+```
+
+**Get Order with Payment and Notifications (full trace):**
 
 ```bash
-# Check which order-service instances processed orders
-docker logs order-service-1 --tail 5 | grep "Processing order"
-docker logs order-service-2 --tail 5 | grep "Processing order"
-docker logs order-service-3 --tail 5 | grep "Processing order"
+# 1. Create an order and capture the orderId
+ORDER_RESPONSE=$(curl -s -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"trace-001","productName":"TraceWidget","quantity":1,"amount":19.99}')
+ORDER_ID=$(echo "$ORDER_RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['orderId'])")
+echo "Order ID: $ORDER_ID"
+
+# 2. Wait for async processing
+sleep 3
+
+# 3. Get the order
+curl -s "http://localhost:3000/orders/$ORDER_ID" | python -m json.tool
+
+# 4. Get the payment for this order
+curl -s "http://localhost:3000/orders/$ORDER_ID/payment" | python -m json.tool
+
+# 5. Get notifications for this order
+curl -s "http://localhost:3000/orders/$ORDER_ID/notifications" | python -m json.tool
 ```
+
+#### 4.6 Verify Load Balancing & Instance-ID Logging
+
+Each microservice logs its `INSTANCE_ID` on every operation. Use the commands below to verify requests are distributed across all replicas at every layer and that logs carry the correct instance identifiers.
+
+---
+
+**Layer 1: Nginx → API Gateway**
+
+The API Gateway assigns a unique `INSTANCE_ID` (e.g., `api-gateway-ab12cd34`) at startup. Hit the `/load-balance/info` endpoint repeatedly to confirm Nginx distributes requests across all 3 replicas.
+
+```bash
+# Send 30 requests and count unique instance IDs (Bash / Git Bash)
+for i in $(seq 1 30); do
+  curl -s http://localhost:3000/load-balance/info | python -c "import sys,json; print(json.load(sys.stdin)['servedBy'])"
+done | sort | uniq -c
+
+# PowerShell equivalent
+1..30 | ForEach-Object {
+  (Invoke-RestMethod http://localhost:3000/load-balance/info).servedBy
+} | Group-Object | Select-Object Count, Name
+```
+
+**Expected:** 3 unique instance IDs, roughly even distribution (e.g., ~10/10/10 for 30 requests).
+
+---
+
+**Layer 2: RabbitMQ → Order Service**
+
+Each order-service instance logs messages with its instance ID. Send orders and check logs to see which instances processed them.
+
+```bash
+# First, send 10 orders
+for i in $(seq 1 10); do
+  curl -s -X POST http://localhost:3000/orders \
+    -H "Content-Type: application/json" \
+    -d "{\"customerId\":\"lb-test-$i\",\"productName\":\"LoadTest\",\"quantity\":1,\"amount\":9.99}" > /dev/null
+done
+
+sleep 2
+
+# Check logs from all 3 order-service replicas
+echo "=== Order Service 1 ==="
+docker logs order-service-1 2>&1 | tail -5
+
+echo -e "\n=== Order Service 2 ==="
+docker logs order-service-2 2>&1 | tail -5
+
+echo -e "\n=== Order Service 3 ==="
+docker logs order-service-3 2>&1 | tail -5
+
+# Count how many orders each instance processed (Docker Compose)
+echo -e "\n=== Order Distribution ==="
+echo -n "order-service-1: "; docker logs order-service-1 2>&1 | grep -c "ORDER-SERVICE"
+echo -n "order-service-2: "; docker logs order-service-2 2>&1 | grep -c "ORDER-SERVICE"
+echo -n "order-service-3: "; docker logs order-service-3 2>&1 | grep -c "ORDER-SERVICE"
+```
+
+**Log output example** (note the INSTANCE_ID in the log prefix):
+
+```
+[ORDER-SERVICE-0d7adad1e4] [{instance:0d7adad1e4}][{queue:order_queue}][{pattern:create_order}]
+Processing order: {"customerId":"lb-test-1",...}
+```
+
+---
+
+**Layer 3: RabbitMQ → Payment Service**
+
+Each payment-service instance logs its instance ID when processing `order_created` events.
+
+```bash
+echo "=== Payment Service 1 ==="
+docker logs payment-service-1 2>&1 | tail -5
+
+echo -e "\n=== Payment Service 2 ==="
+docker logs payment-service-2 2>&1 | tail -5
+
+echo -e "\n=== Payment Service 3 ==="
+docker logs payment-service-3 2>&1 | tail -5
+
+# Count payments processed per instance
+echo -e "\n=== Payment Distribution ==="
+echo -n "payment-service-1: "; docker logs payment-service-1 2>&1 | grep -c "PAYMENT-SERVICE"
+echo -n "payment-service-2: "; docker logs payment-service-2 2>&1 | grep -c "PAYMENT-SERVICE"
+echo -n "payment-service-3: "; docker logs payment-service-3 2>&1 | grep -c "PAYMENT-SERVICE"
+```
+
+---
+
+**Layer 4: RabbitMQ → Notification Service**
+
+Each notification-service instance logs its instance ID when processing both `order_created` and `payment_processed` events.
+
+```bash
+echo "=== Notification Service 1 ==="
+docker logs notification-service-1 2>&1 | tail -5
+
+echo -e "\n=== Notification Service 2 ==="
+docker logs notification-service-2 2>&1 | tail -5
+
+echo -e "\n=== Notification Service 3 ==="
+docker logs notification-service-3 2>&1 | tail -5
+
+# Count notifications processed per instance
+echo -e "\n=== Notification Distribution ==="
+echo -n "notification-service-1: "; docker logs notification-service-1 2>&1 | grep -c "NOTIFICATION-SERVICE"
+echo -n "notification-service-2: "; docker logs notification-service-2 2>&1 | grep -c "NOTIFICATION-SERVICE"
+echo -n "notification-service-3: "; docker logs notification-service-3 2>&1 | grep -c "NOTIFICATION-SERVICE"
+```
+
+---
+
+**Layer 5: MongoDB — Verify Data Persistence via API**
+
+Use the `/stats` endpoint to confirm data is persisted across all 3 MongoDB collections:
+
+```bash
+curl -s http://localhost:3000/stats | python -m json.tool
+```
+
+Or query individual collections via the public API:
+
+```bash
+# List all orders
+curl -s http://localhost:3000/orders | python -c "import sys,json; d=json.load(sys.stdin); print(f'Total orders: {d[\"count\"]}')"
+
+# List all payments
+curl -s http://localhost:3000/payments | python -c "import sys,json; d=json.load(sys.stdin); print(f'Total payments: {d[\"count\"]}')"
+
+# List all notifications
+curl -s http://localhost:3000/notifications | python -c "import sys,json; d=json.load(sys.stdin); print(f'Total notifications: {d[\"count\"]}')"
+```
+
+**Load Balancing Verification Summary:**
+
+| Layer                           | Verification Method                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------------- |
+| Nginx → API Gateway             | `GET /load-balance/info` × 30 → count unique `servedBy` values                           |
+| RabbitMQ → Order Service        | Check `docker logs order-service-{1,2,3}` for `ORDER-SERVICE-{instanceId}` log prefix    |
+| RabbitMQ → Payment Service      | Check `docker logs payment-service-{1,2,3}` for `PAYMENT-SERVICE-{instanceId}` prefix    |
+| RabbitMQ → Notification Service | Check `docker logs notification-service-{1,2,3}` for `NOTIFICATION-SERVICE-{instanceId}` |
+| MongoDB (data persistence)      | `GET /stats` → verify `orders >= 1`, `payments >= orders`, `notifications >= orders*2`   |
 
 #### 4.6 Error Cases
 

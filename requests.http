@@ -91,3 +91,78 @@ Content-Type: application/json
   "quantity": 1,
   "amount": -5.00
 }
+
+### ================================================================
+### 8. Public Query Endpoints (Read data from MongoDB via API Gateway)
+### ================================================================
+
+### --------------------------------------------------
+### 8a. Stats Dashboard - Document counts + health check
+### --------------------------------------------------
+GET http://localhost:3000/stats
+
+### --------------------------------------------------
+### 8b. Load Balance Info - Instance ID + uptime
+### --------------------------------------------------
+GET http://localhost:3000/load-balance/info
+
+### --------------------------------------------------
+### 8c. List All Orders (with serving instance)
+### --------------------------------------------------
+GET http://localhost:3000/orders
+
+### --------------------------------------------------
+### 8d. Get Order by ID (replace <orderId> with actual ID)
+### --------------------------------------------------
+GET http://localhost:3000/orders/<orderId>
+
+### --------------------------------------------------
+### 8e. Get Payment for an Order (replace <orderId>)
+### --------------------------------------------------
+GET http://localhost:3000/orders/<orderId>/payment
+
+### --------------------------------------------------
+### 8f. Get Notifications for an Order (replace <orderId>)
+### --------------------------------------------------
+GET http://localhost:3000/orders/<orderId>/notifications
+
+### --------------------------------------------------
+### 8g. List All Payments
+### --------------------------------------------------
+GET http://localhost:3000/payments
+
+### --------------------------------------------------
+### 8h. List All Notifications
+### --------------------------------------------------
+GET http://localhost:3000/notifications
+
+### ================================================================
+### 9. Load Balancing Verification
+### (Send multiple requests to verify distribution across replicas)
+### ================================================================
+
+### --------------------------------------------------
+### 9a. Verify Nginx → API Gateway Load Balancing
+### Hit /load-balance/info multiple times, note the instance IDs
+### --------------------------------------------------
+GET http://localhost:3000/load-balance/info
+
+###
+
+GET http://localhost:3000/load-balance/info
+
+###
+
+GET http://localhost:3000/load-balance/info
+
+###
+
+GET http://localhost:3000/load-balance/info
+
+###
+
+GET http://localhost:3000/load-balance/info
+
+###
+
+GET http://localhost:3000/load-balance/info
