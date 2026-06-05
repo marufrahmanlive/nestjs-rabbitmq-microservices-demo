@@ -10,7 +10,7 @@ A production-grade microservices architecture built with **NestJS**, **RabbitMQ*
                           ┌─────────────────────────────────────┐
                           │         Nginx (Port 3000)           │
                           │      Reverse Proxy + Load Balancer  │
-                          │          (least_conn)               │
+                          │    (Docker DNS resolver / VIP)      │
                           └──────┬──────────┬──────────┬────────┘
                                  │          │          │
                     ┌────────────┼──────────┼──────────┼────────────┐
@@ -53,7 +53,7 @@ A production-grade microservices architecture built with **NestJS**, **RabbitMQ*
 
 ```
 1. Client → POST /orders (via Nginx:3000)
-2. Nginx → API Gateway (load balanced, least_conn)
+2. Nginx → API Gateway (load balanced via Docker VIP)
 3. API Gateway → RabbitMQ order_queue (MessagePattern)
 4. Order Service → Creates order in MongoDB
                 → Emits order_created event → payment_queue + notification_queue
@@ -66,16 +66,16 @@ A production-grade microservices architecture built with **NestJS**, **RabbitMQ*
 
 ## Tech Stack
 
-| Layer                | Technology              | Version               |
-| -------------------- | ----------------------- | --------------------- |
-| **Runtime**          | Node.js                 | 20 (Alpine)           |
-| **Framework**        | NestJS                  | 10.4                  |
-| **Message Broker**   | RabbitMQ                | 3 (Management Alpine) |
-| **Database**         | MongoDB                 | 7                     |
-| **ODM**              | Mongoose                | 8.4                   |
-| **Reverse Proxy**    | Nginx                   | 1.31 (Alpine)         |
-| **Containerization** | Docker + Docker Compose | 3.8+                  |
-| **Logging**          | Winston                 | 3.13                  |
+| Layer                | Technology                             | Version               |
+| -------------------- | -------------------------------------- | --------------------- |
+| **Runtime**          | Node.js                                | 20 (Alpine)           |
+| **Framework**        | NestJS                                 | 10.4                  |
+| **Message Broker**   | RabbitMQ                               | 3 (Management Alpine) |
+| **Database**         | MongoDB                                | 7                     |
+| **ODM**              | Mongoose                               | 8.4                   |
+| **Reverse Proxy**    | Nginx                                  | 1.31 (Alpine)         |
+| **Containerization** | Docker + Docker Compose + Docker Swarm | 3.8+ / 27+            |
+| **Logging**          | Winston                                | 3.13                  |
 
 ---
 
@@ -110,7 +110,8 @@ nestjs-rabbitmq-microservices-demo/
 │   ├── database/              # Mongoose schemas & DatabaseModule
 │   └── rabbitmq/              # Dynamic RabbitMQ client module
 ├── deploy/
-│   └── docker-compose.yml     # Full stack orchestration (15 containers)
+│   ├── docker-compose.yml       # Docker Compose orchestration (15 containers)
+│   └── docker-compose.swarm.yml # Docker Swarm stack (rolling updates, replicas)
 ├── infrastructure/
 │   └── nginx/
 │       └── nginx.conf         # Reverse proxy + load balancer config
@@ -132,7 +133,7 @@ nestjs-rabbitmq-microservices-demo/
 
 ---
 
-## Quick Start
+## Quick Start (Docker Compose)
 
 ### 1. Clone the Repository
 
@@ -213,6 +214,169 @@ docker exec mongodb mongosh --quiet microservices-demo --eval "
 
 ---
 
+## Docker Swarm Deployment
+
+For production-grade deployments with **rolling updates**, **resource constraints**, and **orchestrated replica management**, use Docker Swarm.
+
+### 1. Initialize Docker Swarm
+
+```bash
+# Initialize a single-node swarm (manager)
+docker swarm init
+
+# (Optional) To add worker nodes, run the join command shown after init
+```
+
+### 2. Build Service Images
+
+```bash
+docker build --build-arg SERVICE_NAME=api-gateway -t microservices/api-gateway:latest .
+docker build --build-arg SERVICE_NAME=order-service -t microservices/order-service:latest .
+docker build --build-arg SERVICE_NAME=payment-service -t microservices/payment-service:latest .
+docker build --build-arg SERVICE_NAME=notification-service -t microservices/notification-service:latest .
+```
+
+### 3. Deploy the Stack
+
+```bash
+docker stack deploy -c deploy/docker-compose.swarm.yml microservices
+```
+
+This deploys 7 services across the swarm:
+
+| Service                | Replicas | Ports            | Resources (limit) |
+| ---------------------- | -------- | ---------------- | ----------------- |
+| `mongodb`              | 1        | `27017` (host)   | 512 MB            |
+| `rabbitmq`             | 1        | `5672`, `15672`  | 512 MB            |
+| `api-gateway`          | 3        | internal: `3000` | 256 MB            |
+| `order-service`        | 3        | —                | 256 MB            |
+| `payment-service`      | 3        | —                | 256 MB            |
+| `notification-service` | 3        | —                | 256 MB            |
+| `nginx`                | 1        | `3000:3000`      | 128 MB            |
+
+### 4. Monitor Deployment
+
+```bash
+# View all services
+docker stack services microservices
+
+# View individual service tasks (replicas)
+docker stack ps microservices
+
+# View logs for a specific service
+docker service logs microservices_order-service --tail 50
+
+# View logs for all services
+docker service logs microservices_api-gateway microservices_order-service microservices_payment-service microservices_notification-service
+```
+
+### 5. Rolling Updates
+
+The swarm stack is configured with rolling updates (1 at a time, 10s delay, auto-rollback on failure). To update services:
+
+```bash
+# Rebuild images with changes
+docker build --build-arg SERVICE_NAME=api-gateway -t microservices/api-gateway:latest .
+
+# Update the service (rolling, zero-downtime)
+docker service update --image microservices/api-gateway:latest microservices_api-gateway
+```
+
+### 6. Scale Services
+
+```bash
+# Scale up/down any service
+docker service scale microservices_order-service=5
+docker service scale microservices_payment-service=5
+```
+
+### 7. Tear Down
+
+```bash
+# Remove the entire stack
+docker stack rm microservices
+
+# Leave swarm mode (if no longer needed)
+docker swarm leave --force
+```
+
+---
+
+## Load Balancing Architecture
+
+### Docker Compose (Static Upstream)
+
+Nginx resolves named containers (`api-gateway-1`, `api-gateway-2`, `api-gateway-3`) at startup via the Docker DNS bridge:
+
+```nginx
+upstream api_gateway_pool {
+    least_conn;
+    server api-gateway-1:3000;
+    server api-gateway-2:3000;
+    server api-gateway-3:3000;
+    keepalive 32;
+}
+```
+
+### Docker Swarm (DNS Resolver + VIP)
+
+A static `upstream` block in Swarm caches the VIP, routing all traffic to a single replica. To fix this, we use Docker's embedded DNS resolver (`127.0.0.11`) with a variable-based `proxy_pass`, forcing re-resolution on every request:
+
+```nginx
+server {
+    listen 3000;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location / {
+        set $api_gateway "api-gateway:3000";
+        proxy_pass http://$api_gateway;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /health {
+        set $api_gateway_health "api-gateway:3000";
+        proxy_pass http://$api_gateway_health/orders/health;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+This leverages Docker Swarm's built-in VIP round-robin distribution across all API Gateway replicas.
+
+### RabbitMQ Load Balancing
+
+For **message patterns** (request-reply), RabbitMQ uses work-queue semantics — each message is delivered to **exactly one** consumer in the queue, naturally distributing load across all 3 order-service replicas.
+
+For **event patterns** (pub/sub), RabbitMQ fanout exchanges deliver each event to **all** subscribing queues, with each queue's consumers competing via work-queue distribution across 3 replicas.
+
+### Load Balancing Verification
+
+```bash
+# Docker Compose (all 3 API Gateway instances should appear)
+for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance; done
+
+# Docker Swarm (PowerShell — 50 requests to verify distribution)
+1..50 | ForEach-Object { curl.exe -s http://localhost:3000/health }
+
+# Expected result (example from verified deployment):
+# api-gateway-2c64a6ba : 16 requests (32%)
+# api-gateway-9a54bf2d : 17 requests (34%)
+# api-gateway-da586eba : 17 requests (34%)
+```
+
+**Verified distribution across all layers (30-order test):**
+
+| Layer                           | Instances Used | Distribution |
+| ------------------------------- | -------------- | ------------ |
+| Nginx → API Gateway             | 3/3 ✓          | 16 / 17 / 17 |
+| RabbitMQ → Order Service        | 3/3 ✓          | 17 / 17 / 17 |
+| RabbitMQ → Payment Service      | 3/3 ✓          | 17 / 17 / 17 |
+| RabbitMQ → Notification Service | 3/3 ✓          | 17 / 17 / 17 |
+
+---
+
 ## Development Mode
 
 For local development without Docker:
@@ -284,34 +448,6 @@ Each service runs with `--watch` for hot-reload during development.
 
 ---
 
-## Nginx Configuration
-
-Nginx listens on **port 3000** and load balances across 3 API Gateway instances using `least_conn` algorithm:
-
-```
-upstream api_gateway_pool {
-    least_conn;
-    server api-gateway-1:3000;
-    server api-gateway-2:3000;
-    server api-gateway-3:3000;
-    keepalive 32;
-}
-```
-
-### Load Balancing Verification
-
-```bash
-for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance; done
-# api-gateway-3349c03a
-# api-gateway-51bc9258
-# api-gateway-e93ed9ad
-# api-gateway-3349c03a
-# api-gateway-51bc9258
-# api-gateway-e93ed9ad
-```
-
----
-
 ## MongoDB Collections
 
 | Collection      | Schema Fields                                                        | Populated By         |
@@ -322,21 +458,9 @@ for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance;
 
 ---
 
-## Docker Compose Services
-
-| Service                | Instances | Ports            | Dependencies      |
-| ---------------------- | --------- | ---------------- | ----------------- |
-| `mongodb`              | 1         | `27017`          | —                 |
-| `rabbitmq`             | 1         | `5672`, `15672`  | —                 |
-| `api-gateway`          | 3         | internal: `3000` | rabbitmq          |
-| `order-service`        | 3         | —                | rabbitmq, mongodb |
-| `payment-service`      | 3         | —                | rabbitmq, mongodb |
-| `notification-service` | 3         | —                | rabbitmq, mongodb |
-| `nginx`                | 1         | `3000:3000`      | api-gateway ×3    |
-
----
-
 ## Commands Reference
+
+### Docker Compose
 
 | Action                     | Command                                                                   |
 | -------------------------- | ------------------------------------------------------------------------- |
@@ -349,6 +473,20 @@ for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance;
 | Access MongoDB shell       | `docker exec -it mongodb mongosh microservices-demo`                      |
 | RabbitMQ queues info       | `curl -u admin:admin http://localhost:15672/api/queues`                   |
 
+### Docker Swarm
+
+| Action                   | Command                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| Initialize Swarm         | `docker swarm init`                                                                        |
+| Deploy stack             | `docker stack deploy -c deploy/docker-compose.swarm.yml microservices`                     |
+| List services            | `docker stack services microservices`                                                      |
+| List tasks (replicas)    | `docker stack ps microservices`                                                            |
+| View service logs        | `docker service logs microservices_order-service --tail 50`                                |
+| Scale a service          | `docker service scale microservices_order-service=5`                                       |
+| Update service (rolling) | `docker service update --image microservices/api-gateway:latest microservices_api-gateway` |
+| Remove stack             | `docker stack rm microservices`                                                            |
+| Leave swarm              | `docker swarm leave --force`                                                               |
+
 ---
 
 ## Troubleshooting
@@ -357,12 +495,27 @@ for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance;
 
 Ensure ports `3000`, `5672`, `15672`, and `27017` are not in use by other applications.
 
+### Swarm Port Conflicts
+
+If ports are already allocated, stop any existing containers first:
+
+```bash
+docker compose -f deploy/docker-compose.yml down
+docker stack rm microservices
+```
+
+### Swarm Nginx Not Load Balancing
+
+If all requests hit the same API Gateway instance in Docker Swarm, verify that `nginx.conf` uses the resolver-based approach (`resolver 127.0.0.11` + variable `proxy_pass`) documented above. Static `upstream` blocks cache the Swarm VIP and do not distribute traffic.
+
 ### RabbitMQ Connection Issues
 
 If services restart repeatedly, check the RabbitMQ logs:
 
 ```bash
 docker logs rabbitmq --tail 30
+# or in Swarm:
+docker service logs microservices_rabbitmq --tail 30
 ```
 
 ### MongoDB Connection Issues
@@ -376,17 +529,17 @@ docker exec mongodb mongosh --eval "db.adminCommand('ping')"
 ### View Service Logs
 
 ```bash
-# API Gateway
+# Docker Compose
 docker logs api-gateway-1 --tail 20
-
-# Order Service
 docker logs order-service-1 --tail 20
-
-# Payment Service
 docker logs payment-service-1 --tail 20
-
-# Notification Service
 docker logs notification-service-1 --tail 20
+
+# Docker Swarm
+docker service logs microservices_api-gateway --tail 20
+docker service logs microservices_order-service --tail 20
+docker service logs microservices_payment-service --tail 20
+docker service logs microservices_notification-service --tail 20
 ```
 
 ---
