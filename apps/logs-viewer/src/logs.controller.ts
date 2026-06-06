@@ -42,19 +42,6 @@ export class LogsController {
   }
 
   /**
-   * GET /api/logs/:id
-   * Get a single audit log entry by ID with full detail
-   */
-  @Get("api/logs/:id")
-  async getLogById(@Param("id") id: string) {
-    const log = await this.auditLogModel.findById(id).lean();
-    if (!log) {
-      return { found: false, message: `Log with id '${id}' not found` };
-    }
-    return { found: true, log };
-  }
-
-  /**
    * GET /api/logs/stats
    * Aggregated statistics across services
    */
@@ -85,6 +72,19 @@ export class LogsController {
       instances,
       breakdown: stats
     };
+  }
+
+  /**
+   * GET /api/logs/:id
+   * Get a single audit log entry by ID with full detail
+   */
+  @Get("api/logs/:id")
+  async getLogById(@Param("id") id: string) {
+    const log = await this.auditLogModel.findById(id).lean();
+    if (!log) {
+      return { found: false, message: `Log with id '${id}' not found` };
+    }
+    return { found: true, log };
   }
 
   /**
@@ -126,7 +126,7 @@ export class LogsController {
 }
 
 function getDashboardHtml(): string {
-  return `<!DOCTYPE html>
+  const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -250,11 +250,11 @@ tbody tr.expanded { background: #172033; border-left: 3px solid #38bdf8; }
   </div>
   <div>
     <label>&nbsp;</label>
-    <button onclick="applyFilters()">&#128269; Search</button>
+    <button onclick="applyFilters()">🔍 Search</button>
   </div>
   <div>
     <label>&nbsp;</label>
-    <button class="secondary" onclick="resetFilters()">&#8635; Reset</button>
+    <button class="secondary" onclick="resetFilters()">↻ Reset</button>
   </div>
   <div class="auto-refresh">
     <input type="checkbox" id="autoRefresh">
@@ -287,44 +287,9 @@ let currentPage = 0;
 const limit = 50;
 let expandedRow = null;
 
-async function loadServices() {
-  try {
-    const r = await fetch('/api/services');
-    const d = await r.json();
-    const sel = document.getElementById('svcFilter');
-    d.services.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
-  } catch(e) {}
-}
-
-async function loadStats() {
-  try {
-    const r = await fetch('/api/logs/stats');
-    const d = await r.json();
-    document.getElementById('statsBar').innerHTML =
-      '<div class="stat-card"><div class="label">Total Logs</div><div class="value">' + d.totalLogs + '</div></div>' +
-      '<div class="stat-card error"><div class="label">Errors</div><div class="value">' + (d.errorCount || 0) + '</div></div>' +
-      '<div class="stat-card"><div class="label">Services</div><div class="value">' + (d.services ? d.services.length : 0) + '</div></div>' +
-      '<div class="stat-card"><div class="label">Instances</div><div class="value">' + (d.instances ? d.instances.length : 0) + '</div></div>';
-  } catch(e) {}
-}
-
-function getFilters() {
-  return {
-    service: document.getElementById('svcFilter').value,
-    level: document.getElementById('lvlFilter').value,
-    instanceId: document.getElementById('instFilter').value,
-    handler: document.getElementById('handlerFilter').value
-  };
-}
-
-function levelClass(level) {
-  const m = { log: 'level-log', error: 'level-error', warn: 'level-warn', debug: 'level-debug', verbose: 'level-verbose' };
-  return m[level] || 'level-log';
-}
-
 function escHtml(s) {
   if (s == null) return '';
-  return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function formatJson(obj) {
@@ -338,17 +303,50 @@ function truncate(s, len) {
   return s.length > len ? s.substring(0, len) + '...' : s;
 }
 
+function levelClass(level) {
+  const m = { log: 'level-log', error: 'level-error', warn: 'level-warn', debug: 'level-debug', verbose: 'level-verbose' };
+  return m[level] || 'level-log';
+}
+
+async function loadServices() {
+  try {
+    const r = await fetch('/api/services');
+    const d = await r.json();
+    const sel = document.getElementById('svcFilter');
+    d.services.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
+  } catch(e) { console.error('Error loading services:', e); }
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/logs/stats');
+    const d = await r.json();
+    document.getElementById('statsBar').innerHTML =
+      '<div class="stat-card"><div class="label">Total Logs</div><div class="value">' + d.totalLogs + '</div></div>' +
+      '<div class="stat-card error"><div class="label">Errors</div><div class="value">' + (d.errorCount || 0) + '</div></div>' +
+      '<div class="stat-card"><div class="label">Services</div><div class="value">' + (d.services ? d.services.length : 0) + '</div></div>' +
+      '<div class="stat-card"><div class="label">Instances</div><div class="value">' + (d.instances ? d.instances.length : 0) + '</div></div>';
+  } catch(e) { console.error('Error loading stats:', e); }
+}
+
+function getFilters() {
+  return {
+    service: document.getElementById('svcFilter').value,
+    level: document.getElementById('lvlFilter').value,
+    instanceId: document.getElementById('instFilter').value,
+    handler: document.getElementById('handlerFilter').value
+  };
+}
+
 function toggleDetail(logId, rowEl) {
   const detailRow = document.getElementById('detail-' + logId);
   if (!detailRow) return;
-
   if (expandedRow && expandedRow !== logId) {
     const old = document.getElementById('detail-' + expandedRow);
     if (old) old.classList.remove('show');
     const oldMain = document.querySelector('tr[data-logid="' + expandedRow + '"]');
     if (oldMain) oldMain.classList.remove('expanded');
   }
-
   if (detailRow.classList.contains('show')) {
     detailRow.classList.remove('show');
     rowEl.classList.remove('expanded');
@@ -370,54 +368,32 @@ function buildDetailRow(log) {
   const hasResp = responseData && typeof responseData === 'object' && Object.keys(responseData).length > 0;
 
   let html = '<div class="detail-panel">';
-
-  // Meta info
-  html += '<div class="section">';
-  html += '<h4>&#128269; Details</h4>';
+  html += '<div class="section"><h4>Details</h4>';
   html += '<div class="meta-item"><span class="key">Log ID:</span><span class="val">' + escHtml(log._id) + '</span></div>';
   html += '<div class="meta-item"><span class="key">Correlation ID:</span><span class="val">' + escHtml(log.correlationId || '-') + '</span></div>';
   html += '<div class="meta-item"><span class="key">Created:</span><span class="val">' + (log.createdAt ? new Date(log.createdAt).toLocaleString() : '-') + '</span></div>';
   html += '<div class="meta-item"><span class="key">Updated:</span><span class="val">' + (log.updatedAt ? new Date(log.updatedAt).toLocaleString() : '-') + '</span></div>';
   html += '</div>';
 
-  // Metadata section
-  html += '<div class="section">';
-  html += '<h4>&#128451; Metadata</h4>';
-  if (hasMeta) {
-    html += '<pre>' + escHtml(formatJson(metadata)) + '</pre>';
-  } else {
-    html += '<pre style="color:#64748b">No metadata</pre>';
-  }
+  html += '<div class="section"><h4>Metadata</h4>';
+  if (hasMeta) html += '<pre>' + escHtml(formatJson(metadata)) + '</pre>';
+  else html += '<pre style="color:#64748b">No metadata</pre>';
   html += '</div>';
 
-  // Request Data
-  html += '<div class="section">';
-  html += '<h4>&#128228; Request Data / Event Payload</h4>';
-  if (hasReq) {
-    html += '<pre>' + escHtml(formatJson(requestData)) + '</pre>';
-  } else {
-    html += '<pre style="color:#64748b">No request data</pre>';
-  }
+  html += '<div class="section"><h4>Request Data</h4>';
+  if (hasReq) html += '<pre>' + escHtml(formatJson(requestData)) + '</pre>';
+  else html += '<pre style="color:#64748b">No request data</pre>';
   html += '</div>';
 
-  // Response Data
-  html += '<div class="section">';
-  html += '<h4>&#128229; Response Data</h4>';
-  if (hasResp) {
-    html += '<pre>' + escHtml(formatJson(responseData)) + '</pre>';
-  } else {
-    html += '<pre style="color:#64748b">No response data</pre>';
-  }
+  html += '<div class="section"><h4>Response Data</h4>';
+  if (hasResp) html += '<pre>' + escHtml(formatJson(responseData)) + '</pre>';
+  else html += '<pre style="color:#64748b">No response data</pre>';
   html += '</div>';
 
-  // Error Stack (full-width)
   if (errorStack) {
-    html += '<div class="section full-width error-stack">';
-    html += '<h4>&#128165; Error Stack Trace</h4>';
-    html += '<pre>' + escHtml(errorStack) + '</pre>';
-    html += '</div>';
+    html += '<div class="section full-width error-stack"><h4>Error Stack</h4>';
+    html += '<pre>' + escHtml(errorStack) + '</pre></div>';
   }
-
   html += '</div>';
   return html;
 }
@@ -431,69 +407,53 @@ async function loadLogs(page) {
   if (f.level) params.set('level', f.level);
   if (f.instanceId) params.set('instanceId', f.instanceId);
   if (f.handler) params.set('handler', f.handler);
-
   try {
     const r = await fetch('/api/logs?' + params.toString());
     const d = await r.json();
     renderLogs(d.logs, d.total);
     renderPagination(d.total);
   } catch(e) {
-    document.getElementById('logBody').innerHTML =
-      '<tr><td colspan="10" class="empty">&#9888; Error loading logs. Check if the Logs Viewer API is running.</td></tr>';
+    console.error('Error loading logs:', e);
+    document.getElementById('logBody').innerHTML = '<tr><td colspan="10" class="empty">Error loading logs. Check if the Logs Viewer API is running.</td></tr>';
   }
 }
 
 function renderLogs(logs, total) {
   const tbody = document.getElementById('logBody');
   if (!logs || logs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">&#128123; No audit logs found' +
-      (total > 0 ? '' : '. Create some orders via the API Gateway to populate logs.') + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No audit logs found' + (total > 0 ? '' : '. Create some orders via the API Gateway to populate logs.') + '</td></tr>';
     return;
   }
-
   let mainRows = '';
   let detailRows = '';
   logs.forEach((l, idx) => {
     const logId = l._id || 'row' + idx;
     const isError = l.level === 'error';
-    mainRows += '<tr data-logid="' + logId + '" onclick="toggleDetail(\'' + logId + '\', this)" style="' +
-      (isError ? 'background:rgba(248,113,113,0.05)' : '') + '">' +
+    mainRows += '<tr data-logid="' + logId + '" onclick="toggleDetail(\'' + logId + '\', this)" style="' + (isError ? 'background:rgba(248,113,113,0.05)' : '') + '">' +
       '<td class="timestamp">' + escHtml(l.createdAt ? new Date(l.createdAt).toLocaleString() : '') + '</td>' +
       '<td><span class="level ' + levelClass(l.level) + '">' + escHtml(l.level) + '</span></td>' +
       '<td><span class="service-badge">' + escHtml(l.serviceName) + '</span></td>' +
-      '<td><span class="instance-badge" title="' + escHtml(l.instanceId) + '">' +
-        escHtml(truncate(l.instanceId, 18)) + '</span></td>' +
+      '<td><span class="instance-badge" title="' + escHtml(l.instanceId) + '">' + escHtml(truncate(l.instanceId, 18)) + '</span></td>' +
       '<td><span class="url-cell">' + escHtml(l.handler || '-') + '</span></td>' +
       '<td>' + escHtml(l.method || '-') + '</td>' +
       '<td class="url-cell" title="' + escHtml(l.url) + '">' + escHtml(truncate(l.url, 40)) + '</td>' +
-      '<td>' + (l.statusCode != null
-        ? '<span style="color:' + (l.statusCode < 400 ? '#4ade80' : '#f87171') + ';font-weight:700">' +
-          l.statusCode + '</span>'
-        : '-') + '</td>' +
-      '<td>' + (l.durationMs != null
-        ? '<span class="duration">' + l.durationMs + 'ms</span>'
-        : '-') + '</td>' +
-      '<td class="message-cell" title="' + escHtml(l.message) + '">' +
-        (isError ? '&#10060; ' : '&#9989; ') + escHtml(truncate(l.message, 80)) + '</td>' +
+      '<td>' + (l.statusCode != null ? '<span style="color:' + (l.statusCode < 400 ? '#4ade80' : '#f87171') + ';font-weight:700">' + l.statusCode + '</span>' : '-') + '</td>' +
+      '<td>' + (l.durationMs != null ? '<span class="duration">' + l.durationMs + 'ms</span>' : '-') + '</td>' +
+      '<td class="message-cell" title="' + escHtml(l.message) + '">' + (isError ? 'X ' : '✓ ') + escHtml(truncate(l.message, 80)) + '</td>' +
       '</tr>';
-
-    detailRows += '<tr id="detail-' + logId + '" class="detail-row"><td colspan="10">' +
-      buildDetailRow(l) + '</td></tr>';
+    detailRows += '<tr id="detail-' + logId + '" class="detail-row"><td colspan="10">' + buildDetailRow(l) + '</td></tr>';
   });
-
   tbody.innerHTML = mainRows + detailRows;
 }
 
 function renderPagination(total) {
   const totalPages = Math.ceil(total / limit);
   const div = document.getElementById('pagination');
-  div.innerHTML =
-    '<button onclick="loadLogs(0)" ' + (currentPage === 0 ? 'disabled' : '') + '>&#9198; First</button>' +
-    '<button onclick="loadLogs(' + (currentPage - 1) + ')" ' + (currentPage === 0 ? 'disabled' : '') + '>&#9664; Prev</button>' +
-    '<span style="font-size:0.9rem;color:#94a3b8;">Page ' + (currentPage + 1) + ' of ' + (totalPages || 1) +
-      ' (' + total + ' total)</span>' +
-    '<button onclick="loadLogs(' + (currentPage + 1) + ')" ' + (currentPage >= totalPages - 1 ? 'disabled' : '') + '>Next &#9654;</button>' +
-    '<button onclick="loadLogs(' + (totalPages - 1) + ')" ' + (currentPage >= totalPages - 1 ? 'disabled' : '') + '>Last &#9197;</button>';
+  div.innerHTML = '<button onclick="loadLogs(0)" ' + (currentPage === 0 ? 'disabled' : '') + '>First</button>' +
+    '<button onclick="loadLogs(' + (currentPage - 1) + ')" ' + (currentPage === 0 ? 'disabled' : '') + '>Prev</button>' +
+    '<span style="font-size:0.9rem;color:#94a3b8;">Page ' + (currentPage + 1) + ' of ' + (totalPages || 1) + ' (' + total + ' total)</span>' +
+    '<button onclick="loadLogs(' + (currentPage + 1) + ')" ' + (currentPage >= totalPages - 1 ? 'disabled' : '') + '>Next</button>' +
+    '<button onclick="loadLogs(' + (totalPages - 1) + ')" ' + (currentPage >= totalPages - 1 ? 'disabled' : '') + '>Last</button>';
 }
 
 function applyFilters() { expandedRow = null; loadLogs(0); }
@@ -506,7 +466,6 @@ function resetFilters() {
   loadLogs(0);
 }
 
-// Auto-refresh
 let refreshInterval;
 document.getElementById('autoRefresh').addEventListener('change', function() {
   if (this.checked) {
@@ -516,7 +475,6 @@ document.getElementById('autoRefresh').addEventListener('change', function() {
   }
 });
 
-// Keyboard shortcut for expand/collapse
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && expandedRow) {
     const detailRow = document.getElementById('detail-' + expandedRow);
@@ -533,4 +491,6 @@ loadLogs(0);
 </script>
 </body>
 </html>`;
+
+  return htmlContent;
 }

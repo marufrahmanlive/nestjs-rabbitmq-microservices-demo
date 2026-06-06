@@ -202,6 +202,45 @@ services:
     networks:
       - backend
 
+  logs-viewer:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: logs-viewer
+    image: microservices/logs-viewer:latest
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/microservices-demo
+      LOG_VIEWER_PORT: "9000"
+      SERVICE_NAME: logs-viewer
+    depends_on:
+      - mongodb
+    ports:
+      - target: 9000
+        published: 9000
+        mode: host
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    networks:
+      - backend
+
   nginx:
     image: nginx:alpine
     ports:
