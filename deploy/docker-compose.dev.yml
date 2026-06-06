@@ -1,0 +1,170 @@
+version: "3.8"
+
+# =============================================================================
+# LOCAL DEVELOPMENT — Hot-Reload Mode
+#
+# Source code is mounted into containers via volumes.
+# Each service runs with `nest start --watch` so code changes
+# reflect immediately. No rebuild/redeploy needed.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#   docker compose -f deploy/docker-compose.dev.yml logs -f
+# =============================================================================
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: mongodb-dev
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: microservices-demo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data_dev:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq-dev
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ---- API Gateway (Hot-Reload: npm run start:dev:gateway) ----
+
+  api-gateway:
+    image: node:20-alpine
+    container_name: api-gateway-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run start:dev:gateway"
+    environment:
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
+      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
+      PORT: "3000"
+      SERVICE_NAME: api-gateway
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---- Order Service (Hot-Reload: npm run start:dev:order) ----
+
+  order-service:
+    image: node:20-alpine
+    container_name: order-service-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run start:dev:order"
+    environment:
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
+      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
+      SERVICE_NAME: order-service
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---- Payment Service (Hot-Reload: npm run start:dev:payment) ----
+
+  payment-service:
+    image: node:20-alpine
+    container_name: payment-service-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run start:dev:payment"
+    environment:
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
+      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
+      SERVICE_NAME: payment-service
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---- Notification Service (Hot-Reload: npm run start:dev:notification) ----
+
+  notification-service:
+    image: node:20-alpine
+    container_name: notification-service-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run start:dev:notification"
+    environment:
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
+      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
+      SERVICE_NAME: notification-service
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ---- Logs Viewer (Hot-Reload: npm run start:dev:logs-viewer) ----
+
+  logs-viewer:
+    image: node:20-alpine
+    container_name: logs-viewer-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run start:dev:logs-viewer"
+    environment:
+      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
+      LOG_VIEWER_PORT: "9000"
+      SERVICE_NAME: logs-viewer
+    ports:
+      - "9000:9000"
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - backend
+
+volumes:
+  mongo_data_dev:
+
+networks:
+  backend:
+    driver: bridge

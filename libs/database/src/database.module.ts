@@ -3,6 +3,7 @@ import { MongooseModule, MongooseModuleOptions } from "@nestjs/mongoose";
 import { OrderSchema } from "./schemas/order.schema";
 import { PaymentSchema } from "./schemas/payment.schema";
 import { NotificationSchema } from "./schemas/notification.schema";
+import { AuditLogSchema } from "./schemas/audit-log.schema";
 
 @Module({})
 export class DatabaseModule {
@@ -26,7 +27,8 @@ export class DatabaseModule {
         MongooseModule.forFeature([
           { name: "Order", schema: OrderSchema },
           { name: "Payment", schema: PaymentSchema },
-          { name: "Notification", schema: NotificationSchema }
+          { name: "Notification", schema: NotificationSchema },
+          { name: "AuditLog", schema: AuditLogSchema }
         ])
       ],
       exports: [MongooseModule]

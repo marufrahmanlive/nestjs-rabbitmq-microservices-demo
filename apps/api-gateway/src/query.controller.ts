@@ -1,8 +1,8 @@
-import { Controller, Get, Param } from "@nestjs/common";
+import { Controller, Get, Param, HttpStatus } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model } from "mongoose";
 import { Order, Payment, Notification } from "@app/database";
-import { AppLogger } from "@app/common";
+import { AppLogger, MicroserviceException } from "@app/common";
 
 @Controller()
 export class QueryController {
@@ -45,17 +45,11 @@ export class QueryController {
     this.logger.log(
       `[API-GATEWAY-${this.instanceId}] GET /orders/${id} → ${order ? "found" : "not found"}`
     );
-    if (!order) {
-      return {
-        servedBy: `api-gateway-${this.instanceId}`,
-        found: false,
-        message: `Order with id '${id}' not found`
-      };
-    }
     return {
       servedBy: `api-gateway-${this.instanceId}`,
-      found: true,
-      order
+      found: !!order,
+      order: order || null,
+      ...(order ? {} : { message: `Order with id '${id}' not found` })
     };
   }
 
@@ -193,5 +187,30 @@ export class QueryController {
     );
 
     return stats;
+  }
+
+  /**
+   * GET /test/error
+   * Test endpoint that throws MicroserviceException to verify:
+   * 1. Custom exception filter captures the error
+   * 2. Error audit log is saved to DB
+   * 3. Log viewer UI can display the error log
+   */
+  @Get("test/error")
+  testError(): never {
+    this.logger.log(
+      `[API-GATEWAY-${this.instanceId}] GET /test/error → throwing MicroserviceException`
+    );
+
+    throw new MicroserviceException(
+      "This is a test error from the API Gateway",
+      HttpStatus.BAD_REQUEST,
+      "TEST_ERROR_CODE",
+      {
+        testField: "demo_value",
+        requestedBy: "verification",
+        source: "api-gateway"
+      }
+    );
   }
 }

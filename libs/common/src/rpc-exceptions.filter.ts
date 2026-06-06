@@ -7,12 +7,12 @@ import {
   Inject,
   Optional
 } from "@nestjs/common";
-import { Request, Response } from "express";
+import { RpcException } from "@nestjs/microservices";
 import { AuditLogService } from "./audit-log.service";
 import { MicroserviceException } from "./microservice-exception";
 
 @Catch()
-export class AllExceptionsFilter implements ExceptionFilter {
+export class RpcExceptionsFilter implements ExceptionFilter {
   constructor(
     @Optional()
     @Inject(AuditLogService)
@@ -20,9 +20,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
   ) {}
 
   async catch(exception: unknown, host: ArgumentsHost): Promise<void> {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
+    const ctx = host.switchToRpc();
+    const rpcData = ctx.getData();
+    const rpcContext = ctx.getContext();
+    const pattern = rpcContext?.getPattern?.() || "unknown";
 
     const instanceId = process.env.INSTANCE_ID || "unknown";
     const serviceName = process.env.SERVICE_NAME || "unknown";
@@ -41,6 +42,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       errorCode = exception.errorCode;
       errorMetadata = exception.metadata;
       exceptionType = "MicroserviceException";
+    } else if (exception instanceof RpcException) {
+      const errorResp = exception.getError();
+      if (typeof errorResp === "string") {
+        message = errorResp;
+        status = HttpStatus.INTERNAL_SERVER_ERROR;
+      } else if (errorResp && typeof errorResp === "object") {
+        message = (errorResp as any).message || String(errorResp);
+        status =
+          (errorResp as any).statusCode || HttpStatus.INTERNAL_SERVER_ERROR;
+        errorCode = (errorResp as any).errorCode;
+      } else {
+        message = String(errorResp);
+        status = HttpStatus.INTERNAL_SERVER_ERROR;
+      }
+      exceptionType = "RpcException";
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const resp = exception.getResponse();
@@ -68,40 +84,41 @@ export class AllExceptionsFilter implements ExceptionFilter {
           instanceId,
           serviceName,
           level: "error",
-          message: `[${request.method} ${request.url}] ${status}: ${message}`,
-          handler: `${request.method} ${request.url}`,
-          method: request.method,
-          url: request.url,
+          message: `[RPC: ${pattern}] ${status}: ${message}`,
+          handler: `RPC: ${pattern}`,
+          method: "RPC",
+          url: `rpc:${pattern}`,
           statusCode: status,
-          requestData: {
-            body: (request as any).body,
-            query: request.query,
-            params: request.params
-          },
+          requestData: rpcData,
           errorStack: errorObj.stack,
           metadata: {
             errorCode,
             ...errorMetadata,
-            exceptionType
+            exceptionType,
+            pattern
           }
         });
       }
     } catch (auditErr) {
       // Fail silently to not break error response flow
       console.error(
-        "[AllExceptionsFilter] Failed to write error audit log:",
+        "[RpcExceptionsFilter] Failed to write error audit log:",
         auditErr
       );
     }
 
-    // Send standardized error response
-    response.status(status).json({
+    // Re-throw as RpcException so NestJS RPC layer can handle it properly
+    if (
+      exception instanceof RpcException ||
+      exception instanceof MicroserviceException
+    ) {
+      throw exception;
+    }
+    throw new RpcException({
       statusCode: status,
-      timestamp: new Date().toISOString(),
-      path: request.url,
       message,
       errorCode,
-      metadata: errorMetadata
+      timestamp: new Date().toISOString()
     });
   }
 }

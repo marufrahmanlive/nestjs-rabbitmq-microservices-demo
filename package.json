@@ -12,7 +12,9 @@
     "start:dev:gateway": "nest start api-gateway --watch",
     "start:dev:order": "nest start order-service --watch",
     "start:dev:payment": "nest start payment-service --watch",
-    "start:dev:notification": "nest start notification-service --watch"
+    "start:dev:notification": "nest start notification-service --watch",
+    "start:logs-viewer": "nest start logs-viewer",
+    "start:dev:logs-viewer": "nest start logs-viewer --watch"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
@@ -22,20 +24,20 @@
     "@nestjs/platform-express": "^10.4.0",
     "amqp-connection-manager": "^4.1.14",
     "amqplib": "^0.10.4",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
     "mongoose": "^8.4.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.1",
     "winston": "^3.13.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.0",
     "@nestjs/schematics": "^10.1.0",
     "@types/node": "^20.14.0",
-    "typescript": "^5.5.0",
-    "ts-node": "^10.9.2",
     "ts-loader": "^9.5.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.0",
     "webpack": "^5.92.0"
   }
 }

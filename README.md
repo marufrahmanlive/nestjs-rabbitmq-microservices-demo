@@ -691,6 +691,8 @@ chmod +x smoke-test.sh
 
 ---
 
+---
+
 ## Docker Swarm Deployment
 
 For production-grade deployments with **rolling updates**, **resource constraints**, and **orchestrated replica management**, use Docker Swarm.
@@ -856,21 +858,83 @@ for i in {1..6}; do curl -s http://localhost:3000/orders/health | grep instance;
 
 ## Development Mode
 
-For local development without Docker:
+Two development workflows are supported:
 
-### 1. Start Infrastructure Only
+### Option 1: Docker Hot-Reload (Recommended)
+
+Run all services inside Docker with source code mounted as volumes. Source file changes on your host are detected by NestJS's `--watch` mode and automatically recompile. No Docker image rebuild needed between edits.
+
+#### 1. Start All Dev Services
+
+```bash
+docker compose -f deploy/docker-compose.dev.yml up -d
+```
+
+This starts:
+
+- **MongoDB** (port 27017)
+- **RabbitMQ** (ports 5672 + 15672)
+- **API Gateway** (port 3000, hot-reload)
+- **Order Service** (hot-reload)
+- **Payment Service** (hot-reload)
+- **Notification Service** (hot-reload)
+
+#### 2. View Logs (all services)
+
+```bash
+docker compose -f deploy/docker-compose.dev.yml logs -f
+```
+
+#### 3. Watch a Single Service
+
+```bash
+docker logs -f api-gateway-dev
+docker logs -f order-service-dev
+docker logs -f payment-service-dev
+docker logs -f notification-service-dev
+```
+
+#### 4. Make a Code Change
+
+Edit any TypeScript source file in the project. NestJS `--watch` detects the change and recompiles in seconds. Check the logs to see the service restart:
+
+```bash
+docker logs api-gateway-dev --tail 10
+# Output: [Nest] ... File change detected. Starting incremental compilation...
+```
+
+| Service                    | Ports                    | Hot-Reload   |
+| -------------------------- | ------------------------ | ------------ |
+| `api-gateway-dev`          | 3000 (API)               | ✅ `--watch` |
+| `order-service-dev`        | internal RMQ consumer    | ✅ `--watch` |
+| `payment-service-dev`      | internal RMQ consumer    | ✅ `--watch` |
+| `notification-service-dev` | internal RMQ consumer    | ✅ `--watch` |
+| `rabbitmq-dev`             | 5672, 15672 (management) | —            |
+| `mongodb-dev`              | 27017                    | —            |
+
+#### 5. Stop Dev Environment
+
+```bash
+docker compose -f deploy/docker-compose.dev.yml down
+```
+
+### Option 2: Run Services on Host
+
+For local development without Docker for the application services (infrastructure still runs in Docker):
+
+#### 1. Start Infrastructure Only
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d rabbitmq mongodb
 ```
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Run Services Individually
+#### 3. Run Services Individually
 
 ```bash
 # Start API Gateway (HTTP server on port 3000)
@@ -888,7 +952,7 @@ npm run start:dev:notification
 
 Each service runs with `--watch` for hot-reload during development.
 
-### 4. Environment Variables
+### Environment Variables
 
 | Variable       | Default                                        | Description                    |
 | -------------- | ---------------------------------------------- | ------------------------------ |

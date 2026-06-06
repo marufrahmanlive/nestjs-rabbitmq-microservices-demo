@@ -8,6 +8,7 @@ import { QUEUES } from "@app/contracts";
 async function bootstrap() {
   const instanceId = generateInstanceId();
   process.env.INSTANCE_ID = instanceId;
+  process.env.SERVICE_NAME = "payment-service";
 
   const app = await NestFactory.createMicroservice<MicroserviceOptions>(
     AppModule,

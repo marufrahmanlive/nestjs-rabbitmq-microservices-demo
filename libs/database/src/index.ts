@@ -5,3 +5,4 @@ export {
   Notification,
   NotificationSchema
 } from "./schemas/notification.schema";
+export { AuditLog, AuditLogSchema } from "./schemas/audit-log.schema";
