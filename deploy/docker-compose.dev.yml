@@ -61,6 +61,8 @@ services:
       MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
       PORT: "3000"
       SERVICE_NAME: api-gateway
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     ports:
       - "3000:3000"
     volumes:
@@ -85,6 +87,8 @@ services:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
       MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
       SERVICE_NAME: order-service
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     volumes:
       - ../:/app
       - /app/node_modules
@@ -107,6 +111,8 @@ services:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
       MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
       SERVICE_NAME: payment-service
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     volumes:
       - ../:/app
       - /app/node_modules
@@ -129,6 +135,8 @@ services:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq-dev:5672
       MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
       SERVICE_NAME: notification-service
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
     volumes:
       - ../:/app
       - /app/node_modules

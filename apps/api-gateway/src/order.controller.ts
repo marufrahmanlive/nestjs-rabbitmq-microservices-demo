@@ -15,9 +15,6 @@ export class OrderController {
 
   @Get("health")
   health(): { status: string; instance: string } {
-    this.logger.log(
-      `[API-GATEWAY] 1111111111111111111111111111111111111111111111111111111`
-    );
     return {
       status: "ok1",
       instance: process.env.INSTANCE_ID || "unknown"
