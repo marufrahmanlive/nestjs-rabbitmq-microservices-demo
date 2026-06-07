@@ -140,28 +140,6 @@ services:
     networks:
       - backend
 
-  # ---- Logs Viewer (Hot-Reload: npm run start:dev:logs-viewer) ----
-
-  logs-viewer:
-    image: node:20-alpine
-    container_name: logs-viewer-dev
-    working_dir: /app
-    command: sh -c "npm install && npm run start:dev:logs-viewer"
-    environment:
-      MONGO_URI: mongodb://mongodb-dev:27017/microservices-demo
-      LOG_VIEWER_PORT: "9000"
-      SERVICE_NAME: logs-viewer
-    ports:
-      - "9000:9000"
-    volumes:
-      - ../:/app
-      - /app/node_modules
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    networks:
-      - backend
-
 volumes:
   mongo_data_dev:
 
